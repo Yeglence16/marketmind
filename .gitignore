@@ -1,0 +1,20 @@
+# Sanal ortam ve paket rafı, requirements.txt'ten kurulur
+venv/
+.venv/
+
+# Gizli bilgiler — token, API anahtarları
+.env
+
+# Python'un otomatik ürettiği önbellek dosyaları
+__pycache__/
+*.pyc
+
+# Editör ayarları
+.vscode/
+
+# Yerel veritabanı ve geliştirme scriptleri
+alarms.db
+database_test.py
+gemini_test.py
+index_probe.py
+data_test.py
