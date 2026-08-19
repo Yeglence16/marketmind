@@ -77,6 +77,7 @@ python -m MarketMindBot.main
 
 The bot needs the `bot` and `applications.commands` scopes, with permission to send
 messages and direct messages.
+The bot's interface and AI responses are in Turkish, since it covers Borsa İstanbul (BIST).
 
 ## Known Limitations
 
