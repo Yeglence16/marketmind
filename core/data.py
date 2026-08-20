@@ -68,7 +68,7 @@ class Stock:
         if data.empty:
             return None
         
-        """print(data.tail(3))""" #debug
+        """print(data.tail(3))""" # debug
         
         delta = data["Close"].diff()
         
