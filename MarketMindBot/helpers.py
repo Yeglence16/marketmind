@@ -1,13 +1,16 @@
+"""Shared formatting helpers — colour and emoji rules live here, not in main.py."""
+
 def rate_to_color(changing_rate: float) -> int:
-    """Değişim oranına göre embed rengi (TradingView konvansiyonu)."""
+    """Embed colour for a change rate — green up, red down (TradingView convention)."""
     if changing_rate > 0:
-        return 0x04d13b   # yeşil — yükseliş
+        return 0x04d13b   # green — increasing
     elif changing_rate == 0:
-        return 0x696969   # gri — değişim yok
-    return 0xd10404
+        return 0x696969   # grey — no change
+    return 0xd10404       # red - decreasing
+
     
-# helpers.py
 def rate_to_emoji(changing_rate: float) -> str:
+    """Trend emoji for a change rate."""
     if changing_rate > 0:
         return "📈"
     elif changing_rate == 0:

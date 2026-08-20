@@ -1,18 +1,22 @@
-import os                          # .env'den key okumak için
-from dotenv import load_dotenv     # .env yükleyici
-from google import genai           # Gemini SDK
-from core.data import Stock        # AI, Stock yapısını tanımalı (tip ipucu için)
-from google.genai import errors  
-from google.genai import types
+import os                         
+from dotenv import load_dotenv      # needed to load .env
+from google import genai            # Gemini SDK
+from core.data import Stock         # AI must recognize Stock function
+from google.genai import errors     
+from google.genai import types      # needed for GenerateContentConfig (temperature)
 
 load_dotenv()
-client = genai.Client(api_key = os.getenv("GEMINI_API_KEY")) #Gemini kapısı
+client = genai.Client(api_key = os.getenv("GEMINI_API_KEY")) 
 
-def comment_stock(stock:Stock) -> str:
-    
+def comment_stock(stock:Stock) -> str: 
+    """Ask Gemini for an educational comment on a single stock.
+
+    The prompt forbids buy/sell/hold language — this bot explains data, it does not
+    recommend actions. Returns None if the API call fails.
+    """
     rsi_text = f"{stock.rsi}" if stock.rsi is not None else "veri yok"
     market_status = "Kapalı" if stock.is_market_close else "Açık"
-    volume_text = f"ortalamanın {stock.volume_ratio} katı"   # 1.0 = normal, >1.5 hareketli, <0.7 sönük
+    volume_text = f"ortalamanın {stock.volume_ratio} katı"   
     
     prompt = f"""Sen BIST hisselerini eğitim amaçlı analiz eden bir asistansın.
 Sana verilen verinin ne anlama geldiğini açıkla ve mevcut durumu yorumla.
@@ -57,13 +61,18 @@ Kurallar:
 
 
 def comment_compare(stock_1: Stock, stock_2: Stock) -> str:
+    """Ask Gemini to compare two stocks and explain what the differences mean.
 
+    The prompt forbids ranking the two stocks against each other: saying one looks
+    stronger would be investment advice without the words. Returns None if the API
+    call fails.
+    """
     # both RSI values can be None -> format only when they exist
     rsi_1 = f"{stock_1.rsi}" if stock_1.rsi is not None else "veri yok"
     rsi_2 = f"{stock_2.rsi}" if stock_2.rsi is not None else "veri yok"
     market_status = "Kapalı" if stock_1.is_market_close else "Açık"
 
-    prompt =     prompt = f"""Sen BIST hisselerini eğitim amaçlı analiz eden bir asistansın.
+    prompt = f"""Sen BIST hisselerini eğitim amaçlı analiz eden bir asistansın.
 Sana verilen iki hissenin verisini karşılaştır ve farkların ne anlama geldiğini açıkla.
 
 BİRİNCİ HİSSE

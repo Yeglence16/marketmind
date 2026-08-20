@@ -1,58 +1,69 @@
-import os #dosyalara eriş
-from dotenv import load_dotenv #.env dosyasını okuyan aracı içeri aktar
-import discord #discord kütüphanesini çağır
-from discord.ext import commands #komut yönetimi uzantısını içe aktar
-from core.data import Stock,is_market_open
-from discord import app_commands
-from core.ai import comment_stock
+import os
 import json
-from MarketMindBot.helpers import rate_to_color,rate_to_emoji
+
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
+from dotenv import load_dotenv
+
+from core.data import Stock, is_market_open
+from core.ai import comment_stock, comment_compare
 from core.database import (
     init_db, add_alarm, get_user_alarms, get_all_alarms, delete_alarm
 )
-from discord.ext import tasks
+from MarketMindBot.helpers import rate_to_color, rate_to_emoji
 from MarketMindBot.learn_content import LEARN_TOPICS
-from core.ai import comment_stock, comment_compare
 
 
-with open("MarketMindBot/companies.json","r",encoding="utf-8") as f:
+# ----- CONSTANTS -----
+MAX_ALARMS = 3
+BAND = 0.30                  # +/-30% acceptable target band around the current price
+UP = "up"
+DOWN = "down"
+CHECK_INTERVAL_MINUTES = 5
+
+
+with open("MarketMindBot/companies.json", "r", encoding="utf-8") as f:
     companies = json.load(f)
 
-#env dosyasını çevir
-load_dotenv() #.env dosyasını oku ve kullanıma hazırla
-TOKEN = os.getenv("DISCORD_TOKEN") #DISCORD_TOKEN key'inin valuesunu al
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
 
-intents = discord.Intents.default() #sadece temel izinler, hassas/privileged bilgilere talip degil
-bot = commands.Bot(command_prefix="!", intents = intents) #zorunlu bir prefix ve default intents
+# Default intents only: this bot reads no message content, so no privileged intents needed
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-#botu discorda bağlar
 @bot.event
 async def on_ready():
+    """Prepare the database, publish slash commands, then start the alarm loop."""
     print(f"{bot.user} olarak giriş yapıldı. MarketMind çevrimiçi!")
-    init_db()                              # ← alarms.db + tablo hazır olsun
-    synced = await bot.tree.sync()         # ← sonra Discord'a yükle
+    init_db()                              # table must exist before any command runs
+    synced = await bot.tree.sync()         # publish commands to Discord
     print(f"{len(synced)} slash komut senkronize edildi")
     
     if not alarm_checker.is_running():
         alarm_checker.start()
         print(f"🔔 Alarm döngüsü başladı ({CHECK_INTERVAL_MINUTES} dk periyot)")    
 
-#komut-1
-@bot.tree.command(name ="lebron", description = "Cleveland halkının LeBron şarkısı") #komut ismi ve açıklamasını yaz
-async def lebron(interaction: discord.Interaction): #komut çalisinca tetiklenir
-    await interaction.response.send_message("https://www.youtube.com/watch?v=KVtqZgfFKgQ&t=1s") #outputu ver
+# ----- LEBRON -----
+@bot.tree.command(name="lebron", description="Cleveland halkının LeBron şarkısı")
+async def lebron(interaction: discord.Interaction):
+    """Easter egg."""
+    await interaction.response.send_message("https://www.youtube.com/watch?v=KVtqZgfFKgQ&t=1s")
 
-#---- LATEST VALUE ----
-@bot.tree.command(name = "latest_value",description="Hissenin borsadaki en güncel değeri")
+
+# ----- LATEST VALUE -----
+@bot.tree.command(name="latest_value", description="Hissenin borsadaki en güncel değeri")
 @app_commands.describe(symbol="BIST hisse sembolü, örn: AKBNK")
-async def latest_value(interaction:discord.Interaction,symbol:str):
-    await interaction.response.defer()                     
+async def latest_value(interaction: discord.Interaction, symbol: str):
+    """Raw metrics for one stock: price, daily change, RSI, volume and monthly trend."""
+    await interaction.response.defer()
     sonuc = Stock.get_stock(symbol)
 
     if sonuc is None:
-        
+
         embed_error = discord.Embed(
-            title=f"❌HATA",
+            title="❌HATA",
             description=f"❔`{symbol.upper()}` için veri bulunamadı. Sembolü kontrol et.",
             color=0xf5fc12
         )
@@ -99,18 +110,19 @@ async def latest_value(interaction:discord.Interaction,symbol:str):
     await interaction.followup.send(embed=embed)
 
 
-#---- STOCK VALUATION ----
-@bot.tree.command(name="stock_valuation",description="Son 1 Ay verisine bağlı AI yorumu(yatırım tavsiyesi değildir)" )
+# ----- STOCK VALUATION -----
+@bot.tree.command(name="stock_valuation", description="Son 1 Ay verisine bağlı AI yorumu(yatırım tavsiyesi değildir)")
 @app_commands.describe(symbol="BIST hisse sembolü, örn:AKBNK")
-async def stock_valuation(interaction:discord.Interaction,symbol:str):
+async def stock_valuation(interaction: discord.Interaction, symbol: str):
+    """AI reading of one stock's data. The prompt forbids buy/sell/hold language."""
     await interaction.response.defer()
-    
+
     sonuc = Stock.get_stock(symbol)
-    
+
     if sonuc is None:
-        
+
         embed_error = discord.Embed(
-            title=f"❌HATA",
+            title="❌HATA",
             description=f"❔`{symbol.upper()}` için veri bulunamadı. Sembolü kontrol et.",
             color=0xf5fc12
         )
@@ -121,16 +133,12 @@ async def stock_valuation(interaction:discord.Interaction,symbol:str):
         await interaction.followup.send(embed=embed_error)
         return
 
-
-        
     comment = comment_stock(sonuc)
-    
 
-    
     if comment is None:
-        
+
         embed_none = discord.Embed(
-            title=f"❌HATA",
+            title="❌HATA",
             description="⚠️ Bot yanıt veremedi.Lütfen daha sonra tekrar deneyin.",
             color=0xf5fc12
         )
@@ -170,13 +178,6 @@ async def stock_valuation(interaction:discord.Interaction,symbol:str):
 
 
 
-# ----- CONSTANTS (put at top of file, next to your other constants) -----
-MAX_ALARMS = 3
-BAND = 0.30          # +/-30% acceptable target band
-UP = "up"
-DOWN = "down"
-CHECK_INTERVAL_MINUTES = 5
-
 # ----- ALARM FAMILY -----
 alarm_group = app_commands.Group(name="alarm", description="Fiyat alarmı yönetimi")
 bot.tree.add_command(alarm_group)
@@ -185,6 +186,11 @@ bot.tree.add_command(alarm_group)
 @alarm_group.command(name="set", description="Bir hisse için fiyat alarmı kurar")
 @app_commands.describe(symbol="Stock Symbol", target="Alarmın öteceği fiyat")
 async def alarm_set(interaction: discord.Interaction, symbol: str, target: float):
+    """Create a single-shot price alarm.
+
+    The direction (up/down) is derived from the target and the current price, never
+    asked from the user — that removes a whole class of contradictory input.
+    """
     await interaction.response.defer()
 
     # 1) Alarm limit check
@@ -211,7 +217,7 @@ async def alarm_set(interaction: discord.Interaction, symbol: str, target: float
         ))
         return
 
-    current = stock.closing         # verify the real attribute name in data.py
+    current = stock.closing
 
     # 3) Acceptable target band
     lower, upper = current * (1 - BAND), current * (1 + BAND)
@@ -255,6 +261,7 @@ async def alarm_set(interaction: discord.Interaction, symbol: str, target: float
 # ----- LIST ----- 
 @alarm_group.command(name="list", description="Kurulu alarmlar listesi")
 async def alarm_list(interaction: discord.Interaction):
+    """List the caller's own active alarms, with the id needed by /alarm delete."""
     await interaction.response.defer()
     user_alarm_list = get_user_alarms(interaction.user.id)
 
@@ -296,10 +303,11 @@ async def alarm_list(interaction: discord.Interaction):
 # ----- DELETE ----- 
 @alarm_group.command(name="delete", description="Kurulu alarm silme")
 @app_commands.describe(alarm_id="Silinecek alarmın id'si")
-async def alarm_delete(interaction: discord.Interaction,alarm_id: int):
+async def alarm_delete(interaction: discord.Interaction, alarm_id: int):
+    """Delete one alarm by id. The database layer refuses ids owned by another user."""
     await interaction.response.defer()
-    
-    success = delete_alarm(alarm_id,interaction.user.id)
+
+    success = delete_alarm(alarm_id, interaction.user.id)
     
     
     if not success:
@@ -316,7 +324,7 @@ async def alarm_delete(interaction: discord.Interaction,alarm_id: int):
         await interaction.followup.send(embed=empty)
         return        
     
-    alarm_number = get_user_alarms(interaction.user.id)
+    remaining_alarms = get_user_alarms(interaction.user.id)
 
     delete = discord.Embed(
         title="**✔️Alarm silindi**",
@@ -324,11 +332,11 @@ async def alarm_delete(interaction: discord.Interaction,alarm_id: int):
         color=0x04d13b
         )
     
-    delete.set_footer(text=f"{len(alarm_number)}/{MAX_ALARMS} alarm · Eklemek için: /alarm set <symbol> <target>",
+    delete.set_footer(text=f"{len(remaining_alarms)}/{MAX_ALARMS} alarm · Eklemek için: /alarm set <symbol> <target>",
     icon_url=interaction.user.display_avatar.url)
     await interaction.followup.send(embed=delete)
 
-# ---- INDEX ----
+# ----- INDEX -----
 @bot.tree.command(name="index", description="BIST endeks değeri")
 @app_commands.describe(index="Görüntülenecek endeks")
 @app_commands.choices(index=[
@@ -336,6 +344,7 @@ async def alarm_delete(interaction: discord.Interaction,alarm_id: int):
     app_commands.Choice(name="BIST 30",  value="XU030"),
 ])
 async def index_command(interaction: discord.Interaction, index: app_commands.Choice[str]):
+    """Same pipeline as a single stock, but the value is index points, not lira."""
     await interaction.response.defer()
 
     sonuc = Stock.get_stock(index.value)          # .value = "XU100", .name = "BIST 100"
@@ -385,7 +394,7 @@ async def index_command(interaction: discord.Interaction, index: app_commands.Ch
     await interaction.followup.send(embed=embed)
 
 
-# ---- LEARN ----
+# ----- LEARN -----
 
 # Choices are derived from the content dict -> keys can never drift apart
 LEARN_CHOICES = []
@@ -397,6 +406,7 @@ for key, topic in LEARN_TOPICS.items():
 @app_commands.describe(topic="Öğrenmek istediğin konu")
 @app_commands.choices(topic=LEARN_CHOICES)
 async def learn_command(interaction: discord.Interaction, topic: app_commands.Choice[str]):
+    """Explain one of the metrics the bot displays. No network call, so no defer needed."""
     content = LEARN_TOPICS[topic.value]
     embed = discord.Embed(
         title=f"📚{content['title']}",
@@ -409,6 +419,12 @@ async def learn_command(interaction: discord.Interaction, topic: app_commands.Ch
 
 # ----- COMPARE AI VIEW -----
 class CompareView(discord.ui.View):
+    """Buttons attached to a /compare result.
+
+    The two Stock objects are carried on the view so the callback never refetches them,
+    and only the user who ran the command can press anything.
+    """
+
     def __init__(self, stock_1: Stock, stock_2: Stock, owner_id: int):
         super().__init__(timeout=180)        # 3 min, then the button dies
         self.stock_1 = stock_1               # data carried into the callback
@@ -427,6 +443,7 @@ class CompareView(discord.ui.View):
         return True
 
     async def on_timeout(self):
+        """Grey out the buttons once the view expires, so nobody clicks a dead control."""
         for item in self.children:           # children = every button/select in this view
             item.disabled = True
         if self.message:
@@ -434,10 +451,11 @@ class CompareView(discord.ui.View):
 
     @discord.ui.button(label="AI Yorumu", emoji="🤖", style=discord.ButtonStyle.primary)
     async def ai_comment(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Send the AI reading as a new message, leaving the stats embed untouched above."""
         button.disabled = True                       # single use -> no double token spend
         await interaction.response.edit_message(view=self)   # repaint the stats msg, greyed out
 
-        comment = comment_compare(self.stock_1, self.stock_2)   # ← YOUR function, see below
+        comment = comment_compare(self.stock_1, self.stock_2)
 
         if comment is None:
             await interaction.followup.send(embed=discord.Embed(
@@ -463,13 +481,15 @@ class CompareView(discord.ui.View):
 # ----- COMPARE -----
 @bot.tree.command(name="compare",description="İki hisse verisinin karşılaştırması")
 @app_commands.describe(symbol_1="BIST hisse sembolü", symbol_2="BIST hisse sembolü")
-async def compare(interaction: discord.Interaction, symbol_1:str , symbol_2:str):
+async def compare(interaction: discord.Interaction, symbol_1: str, symbol_2: str):
+    """Two stocks side by side. The AI reading is opt-in, behind a button."""
     await interaction.response.defer()
-    
-    if symbol_1.upper()==symbol_2.upper():
+
+    # Compare uppercased: get_stock() uppercases internally, so this must match its rule
+    if symbol_1.upper() == symbol_2.upper():
         embed_error = discord.Embed(
-            title=f"❌HATA",
-            description=f"❔Farklı 2 şirketi karşılaştırabilirsiniz",
+            title="❌HATA",
+            description="❔Farklı 2 şirketi karşılaştırabilirsiniz",
             color=0xf5fc12
         )
         
@@ -482,15 +502,14 @@ async def compare(interaction: discord.Interaction, symbol_1:str , symbol_2:str)
     stock_1 = Stock.get_stock(symbol_1)
     stock_2 = Stock.get_stock(symbol_2)
 
-    if stock_1 is None or stock_2 is None:  
-        # Verisi bulunamayan sembolleri topluyoruz
+    if stock_1 is None or stock_2 is None:
+        # Name the symbols that failed: "data unavailable" alone is useless with two inputs
         invalid_symbols = []
         if stock_1 is None:
             invalid_symbols.append(symbol_1.upper())
         if stock_2 is None:
             invalid_symbols.append(symbol_2.upper())
 
-        # Birden fazla sembol hatalıysa "THYAO, GARAN" şeklinde birleştirir
         failed_text = ", ".join(invalid_symbols)
 
         embed_error = discord.Embed(
@@ -555,7 +574,12 @@ async def compare(interaction: discord.Interaction, symbol_1:str , symbol_2:str)
 @alarm_set.autocomplete("symbol")
 @latest_value.autocomplete("symbol")
 @stock_valuation.autocomplete("symbol")
-async def symbol_autocomplete(interaction: discord.Interaction,current: str):
+async def symbol_autocomplete(interaction: discord.Interaction, current: str):
+    """Suggest up to 7 companies matching the typed text, by ticker or by name.
+
+    The manual i/ı replacement exists because Python's upper() does not follow Turkish
+    casing rules, so "is" would never match "İŞ BANKASI".
+    """
     wanted = current.replace("i", "İ").replace("ı", "I").upper()
     matching = []
     
@@ -571,6 +595,11 @@ async def symbol_autocomplete(interaction: discord.Interaction,current: str):
 # ----- ALARM CHECKER LOOP -----
 @tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
 async def alarm_checker():
+    """Background task: check every stored alarm, DM the owner on a hit, then delete it.
+
+    Alarms are single-shot by design. One failing symbol is logged and skipped so that a
+    single bad row can never take the whole loop down.
+    """
     # Gate 1: market closed -> do nothing, go back to sleep
     if not is_market_open():
         return
@@ -626,7 +655,8 @@ async def alarm_checker():
 
 @alarm_checker.before_loop
 async def before_alarm_checker():
-    # Don't run the first iteration before the bot is connected
+    """Hold the first iteration until the gateway connection is up."""
     await bot.wait_until_ready()
-                
-bot.run(TOKEN)  #botu baslat ve Discord'a baglan (en sonda olmali)
+
+
+bot.run(TOKEN)   # blocking call, must stay last
